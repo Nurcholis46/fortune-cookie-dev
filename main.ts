@@ -13,19 +13,39 @@ import { join } from "node:path";
 const LINE =
   "The estimate you give today is a fortune your future self must make come true.";
 
-function gateCheck(text: string): void {
+// Gate bounds from RULES.txt: UTF-8 text, 1-120 characters, not only
+// whitespace. Named constants so the bounds are stated once and reused by
+// both the pre-write check and the post-write verification.
+const GATE_MIN_CHARS = 1;
+const GATE_MAX_CHARS = 120;
+
+// Collect every gate violation and report them together, instead of
+// throwing on the first one: a single run now shows the whole failure
+// (e.g. too long AND trailing whitespace) rather than one fix at a time.
+function gateViolations(text: string): string[] {
+  const violations: string[] = [];
   const chars = [...text].length;
-  if (chars < 1 || chars > 120) {
-    throw new Error(`gate: line is ${chars} characters, must be 1-120`);
+  if (chars < GATE_MIN_CHARS || chars > GATE_MAX_CHARS) {
+    violations.push(
+      `length is ${chars} characters, must be ${GATE_MIN_CHARS}-${GATE_MAX_CHARS}`,
+    );
   }
   if (text.trim().length === 0) {
-    throw new Error("gate: line must not be only whitespace");
+    violations.push("must not be only whitespace");
   }
   if (text.includes("\n") || text.includes("\r")) {
-    throw new Error("gate: line must be a single line");
+    violations.push("must be a single line");
   }
   if (text !== text.trim()) {
-    throw new Error("gate: line must not start or end with whitespace");
+    violations.push("must not start or end with whitespace");
+  }
+  return violations;
+}
+
+function gateCheck(text: string): void {
+  const violations = gateViolations(text);
+  if (violations.length > 0) {
+    throw new Error(`gate: ${violations.join("; ")}`);
   }
 }
 
@@ -41,11 +61,15 @@ function main(): void {
   // only the file.
   chmodSync(outPath, 0o644);
   // Read back and re-check so a truncated or mangled write fails loudly.
-  const written = readFileSync(outPath, "utf8");
-  if (written !== LINE) {
-    throw new Error("verify: read-back differs from line");
+  // Compare raw bytes, not just the decoded string, so a UTF-8 encoding
+  // slip (e.g. a mojibake replacement character) is caught too: the
+  // decoded string comparison alone could pass while the file on disk
+  // differs byte-for-byte from LINE.
+  const writtenBytes = readFileSync(outPath);
+  if (!writtenBytes.equals(Buffer.from(LINE, "utf8"))) {
+    throw new Error("verify: read-back bytes differ from line");
   }
-  gateCheck(written);
+  gateCheck(writtenBytes.toString("utf8"));
 }
 
 main();
